@@ -310,7 +310,7 @@ async function initialScan() {
     }
   }
 
-  msg += `\n⏰ Now monitoring every ${SCAN_INTERVAL/1000}s for pumps above +${PUMP_THRESHOLD}% 7d\n`;
+  msg += `\n⏰ Now monitoring every ${SCAN_INTERVAL/1000}s for 24h pumps above +${PUMP_THRESHOLD}%\n`;
   msg += `⚠️ <i>Not financial advice. DYOR.</i>`;
 
   await sendTelegram(msg);
@@ -331,24 +331,19 @@ async function pumpScan() {
     const result = filterDormant(coin);
     if (!result) continue;
 
-    // Must have either 24h or 7d above pump threshold
-    const c24above = result.c24_raw >= PUMP_THRESHOLD;
-    const c7above = result.c7_raw >= PUMP_THRESHOLD;
-    if (!c24above && !c7above) continue;
+    // 24h must be above pump threshold
+    if (result.c24_raw < PUMP_THRESHOLD) continue;
 
-    // Only alert if going meaningfully higher than last alert
+    // Only alert if 24h going meaningfully higher than last alert
     const prev = alerted.get(coin.id);
-    const r7 = Math.round(result.c7_raw * 10) / 10;
     const r24 = Math.round(result.c24_raw * 10) / 10;
-    if (prev && r7 <= prev.c7 + 0.5 && r24 <= prev.c24 + 0.5) continue;
+    if (prev && r24 <= prev.c24 + 0.5) continue;
 
-    const prevC7 = prev ? prev.c7 : null;
     const prevC24 = prev ? prev.c24 : null;
-    alerted.set(coin.id, { c7: r7, c24: r24 });
+    alerted.set(coin.id, { c24: r24, c7: Math.round(result.c7_raw * 10) / 10 });
 
     alerts.push({
       ...result,
-      prevC7: prevC7 != null ? prevC7.toFixed(1) : null,
       prevC24: prevC24 != null ? prevC24.toFixed(1) : null,
     });
   }
@@ -358,25 +353,21 @@ async function pumpScan() {
     return;
   }
 
-  alerts.sort((a, b) => b.c7_raw - a.c7_raw);
+  alerts.sort((a, b) => b.c24_raw - a.c24_raw);
 
   log(`🚨 ${alerts.length} pump alert(s)!`);
 
   let msg = `🚨 <b>PUMP ALERT — ${alerts.length} token${alerts.length > 1 ? 's' : ''} moving!</b>\n`;
-  msg += `<i>24h or 7d change crossed +${PUMP_THRESHOLD}%</i>\n`;
+  msg += `<i>24h change crossed +${PUMP_THRESHOLD}%</i>\n`;
 
   for (const t of alerts.slice(0, 20)) {
     const status = t.score >= 70 ? '🔥' : t.score >= 45 ? '👀' : '📊';
-    const isClimbing = t.prevC7 || t.prevC24;
-    const label = isClimbing ? '📈 STILL CLIMBING' : '🆕 NEW';
+    const label = t.prevC24 ? '📈 STILL CLIMBING' : '🆕 NEW';
     msg += `\n${status} <b>${t.symbol}</b> (${t.name}) — ${label}\n`;
     msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Vol: ${fmtVol(t.volume)}\n`;
-    msg += `   📈 <b>24h: ${t.c24}%</b> | <b>7d: ${t.c7}%</b> | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
-    if (isClimbing) {
-      const parts = [];
-      if (t.prevC24) parts.push(`24h was ${t.prevC24}% → now ${t.c24}%`);
-      if (t.prevC7) parts.push(`7d was ${t.prevC7}% → now ${t.c7}%`);
-      msg += `   ↗️ ${parts.join(' | ')}\n`;
+    msg += `   📈 <b>24h: ${t.c24}%</b> | 7d: ${t.c7}% | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
+    if (t.prevC24) {
+      msg += `   ↗️ 24h was ${t.prevC24}% → now ${t.c24}%\n`;
     }
     msg += `   Score: ${t.score}/100\n`;
     msg += `   <a href="https://www.coingecko.com/en/coins/${t.id}">Chart</a> · <a href="https://www.binance.com/en/trade/${t.symbol}_USDT">Trade</a>\n`;
