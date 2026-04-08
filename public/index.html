@@ -469,7 +469,6 @@ a.coin-link:hover { color: var(--accent); text-decoration: underline; }
   </div>
 </div>
 
-<script src="config.js"></script>
 <script>
 // State
 let allResults = [];
@@ -552,26 +551,22 @@ function setProgress(pct) {
   document.getElementById('progressBar').style.width = pct + '%';
 }
 
-// API config — always Pro
-const API_KEY = (typeof CONFIG !== 'undefined' && CONFIG.COINGECKO_API_KEY) || '';
-const API_BASE = 'https://pro-api.coingecko.com/api/v3';
-
-// Fetch with retry
-async function fetchJSON(url, retries = 3) {
-  const headers = { 'x-cg-pro-api-key': API_KEY };
+// Fetch via serverless proxy
+async function fetchCoinGecko(path, params = {}, retries = 3) {
+  const qs = new URLSearchParams({ path, ...params }).toString();
+  const url = '/api/coingecko?' + qs;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url, { headers });
+      const res = await fetch(url);
       if (res.status === 429) {
-        const wait = 2000 * attempt;
-        await sleep(wait);
+        await sleep(2000 * attempt);
         continue;
       }
-      if (res.status === 401 || res.status === 403) {
-        throw new Error('Invalid API key or wrong plan selected (HTTP ' + res.status + '). Check your key and Demo/Pro setting.');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'HTTP ' + res.status);
       }
-      if (!res.ok) throw new Error('HTTP ' + res.status);
       return await res.json();
     } catch (e) {
       if (attempt === retries) throw e;
@@ -623,11 +618,6 @@ function getStatus(score) {
 async function startScan() {
   if (scanning) return;
 
-  if (!API_KEY || API_KEY === 'YOUR_KEY_HERE') {
-    showError('Missing API key. Copy config.example.js to config.js and add your CoinGecko Pro API key.');
-    return;
-  }
-
   scanning = true;
   hideError();
   allResults = [];
@@ -662,8 +652,7 @@ async function startScan() {
       updateStepText(0, `Fetching Binance tickers — page ${page}/${cfgPages} (${totalTickers} tickers so far)`);
       setProgress((page / cfgPages) * 25);
 
-      const url = `${API_BASE}/exchanges/binance/tickers?page=${page}`;
-      const data = await fetchJSON(url);
+      const data = await fetchCoinGecko('exchanges/binance/tickers', { page });
 
       if (data && data.tickers) {
         for (const t of data.tickers) {
@@ -701,10 +690,15 @@ async function startScan() {
       setProgress(30 + (i / batches.length) * 50);
 
       const ids = batches[i].join(',');
-      const url = `${API_BASE}/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=7d,30d&per_page=${batchSize}&page=1`;
 
       try {
-        const data = await fetchJSON(url);
+        const data = await fetchCoinGecko('coins/markets', {
+          vs_currency: 'usd',
+          ids,
+          price_change_percentage: '7d,30d',
+          per_page: batchSize,
+          page: 1
+        });
         if (Array.isArray(data)) {
           allMarketData = allMarketData.concat(data);
         }
