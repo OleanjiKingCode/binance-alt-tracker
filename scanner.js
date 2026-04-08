@@ -7,11 +7,21 @@ const TG_CHAT = process.env.TELEGRAM_CHAT_ID;
 const SCAN_INTERVAL = (parseInt(process.env.SCAN_INTERVAL) || 60) * 1000;
 const COIN_REFRESH = (parseInt(process.env.COIN_REFRESH_INTERVAL) || 1800) * 1000;
 const PUMP_THRESHOLD = parseFloat(process.env.PUMP_THRESHOLD) || 10;
+const TICKER_PAGES = parseInt(process.env.TICKER_PAGES) || 10;
+
+// Filters
+const MIN_MCAP = parseFloat(process.env.MIN_MCAP) || 5e6;
+const MAX_MCAP = parseFloat(process.env.MAX_MCAP) || 200e6;
+const MIN_ATH_DROP = parseFloat(process.env.MIN_ATH_DROP) || 70;
+const MIN_7D = parseFloat(process.env.MIN_7D) || -15;
+const MAX_7D = parseFloat(process.env.MAX_7D) || 25;
+const MAX_VOL = parseFloat(process.env.MAX_VOL) || 2e6;
 
 // State
-let binanceCoins = [];         // All Binance USDT coin IDs
+let binanceCoins = [];
 let lastCoinRefresh = 0;
-const alerted = new Map();     // coinId -> { c7 } — last alerted 7d change
+let isFirstRun = true;
+const alerted = new Map(); // coinId -> { c7 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -43,30 +53,51 @@ async function cgFetch(path, params = {}) {
   }
 }
 
-// ── Telegram ──
+// ── Telegram (splits long messages) ──
 async function sendTelegram(text) {
   if (!TG_TOKEN || !TG_CHAT || TG_TOKEN === 'your_bot_token_here') {
-    log('⚠️  Telegram not configured, printing alert to console:\n' + text.replace(/<[^>]+>/g, ''));
+    log('⚠️  Telegram not configured, printing to console:\n' + text.replace(/<[^>]+>/g, ''));
     return;
   }
 
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: TG_CHAT,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
-      })
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      log(`❌ Telegram error: ${body}`);
+  // Telegram max is 4096 chars — split if needed
+  const chunks = [];
+  if (text.length <= 4096) {
+    chunks.push(text);
+  } else {
+    const lines = text.split('\n');
+    let chunk = '';
+    for (const line of lines) {
+      if ((chunk + '\n' + line).length > 4000) {
+        chunks.push(chunk);
+        chunk = line;
+      } else {
+        chunk += (chunk ? '\n' : '') + line;
+      }
     }
-  } catch (e) {
-    log(`❌ Telegram send failed: ${e.message}`);
+    if (chunk) chunks.push(chunk);
+  }
+
+  for (const msg of chunks) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TG_CHAT,
+          text: msg,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true
+        })
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        log(`❌ Telegram error: ${body}`);
+      }
+    } catch (e) {
+      log(`❌ Telegram send failed: ${e.message}`);
+    }
+    if (chunks.length > 1) await sleep(500);
   }
 }
 
@@ -119,10 +150,10 @@ function fmtVol(n) {
 
 // ── Fetch all Binance USDT pairs ──
 async function refreshBinanceCoins() {
-  log('🔄 Refreshing Binance USDT pairs...');
+  log(`🔄 Fetching Binance USDT pairs (${TICKER_PAGES} pages)...`);
   const coinMap = new Map();
 
-  for (let page = 1; page <= 6; page++) {
+  for (let page = 1; page <= TICKER_PAGES; page++) {
     try {
       const data = await cgFetch('exchanges/binance/tickers', { page });
       if (data?.tickers) {
@@ -131,32 +162,38 @@ async function refreshBinanceCoins() {
             coinMap.set(t.coin_id, t.base);
           }
         }
+        // If we got less than 100 tickers, no more pages
+        if (data.tickers.length < 100) {
+          log(`   Page ${page} returned ${data.tickers.length} tickers — no more pages.`);
+          break;
+        }
+      } else {
+        break;
       }
     } catch (e) {
-      log(`⚠️  Failed to fetch tickers page ${page}: ${e.message}`);
+      log(`⚠️  Failed page ${page}: ${e.message}`);
     }
-    await sleep(700);
+    if (page < TICKER_PAGES) await sleep(700);
   }
 
   binanceCoins = Array.from(coinMap.keys());
   lastCoinRefresh = Date.now();
-  log(`✅ Found ${binanceCoins.length} Binance USDT pairs`);
+  log(`✅ Found ${binanceCoins.length} unique Binance USDT pairs`);
 }
 
-// ── Main scan cycle ──
-async function scanOnce() {
-  // Refresh coin list if stale
-  if (Date.now() - lastCoinRefresh > COIN_REFRESH || binanceCoins.length === 0) {
-    await refreshBinanceCoins();
-  }
-
-  log(`📡 Scanning ${binanceCoins.length} coins...`);
-
+// ── Fetch market data for all coins ──
+async function fetchAllMarketData() {
   const batchSize = 50;
-  const alerts = [];
+  let allMarket = [];
 
   for (let i = 0; i < binanceCoins.length; i += batchSize) {
     const ids = binanceCoins.slice(i, i + batchSize).join(',');
+    const batchNum = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(binanceCoins.length / batchSize);
+
+    if (batchNum % 10 === 0 || batchNum === 1) {
+      log(`   Batch ${batchNum}/${totalBatches}...`);
+    }
 
     try {
       const data = await cgFetch('coins/markets', {
@@ -166,72 +203,162 @@ async function scanOnce() {
         per_page: batchSize,
         page: 1
       });
-
-      if (!Array.isArray(data)) continue;
-
-      for (const coin of data) {
-        const mc = coin.market_cap;
-        const vol = coin.total_volume;
-        const athPct = coin.ath_change_percentage;
-        const c7 = coin.price_change_percentage_7d_in_currency;
-        const c30 = coin.price_change_percentage_30d_in_currency;
-
-        // Base dormant filters
-        if (!mc || mc < 5e6 || mc > 200e6) continue;
-        if (!athPct || Math.abs(athPct) < 70) continue;
-        if (c30 == null || c30 < -30 || c30 > 30) continue;
-        if (!vol || vol > 2e6) continue;
-
-        // Pump detection: 7d change crossed the threshold
-        if (c7 == null || c7 < PUMP_THRESHOLD) continue;
-
-        const score = calcScore(coin);
-
-        // Only alert if going higher than last alert, skip if dropping
-        const prev = alerted.get(coin.id);
-        if (prev && c7 <= prev.c7) continue;
-
-        const prevC7 = prev ? prev.c7 : null;
-        alerted.set(coin.id, { c7 });
-        alerts.push({
-          symbol: (coin.symbol || '').toUpperCase(),
-          name: coin.name,
-          id: coin.id,
-          score,
-          price: coin.current_price,
-          market_cap: mc,
-          volume: vol,
-          ath_drop: Math.abs(athPct).toFixed(1),
-          c7: c7.toFixed(1),
-          c30: (c30 || 0).toFixed(1),
-          prevC7: prevC7 ? prevC7.toFixed(1) : null,
-        });
-      }
+      if (Array.isArray(data)) allMarket = allMarket.concat(data);
     } catch (e) {
-      log(`⚠️  Batch failed: ${e.message}`);
+      log(`⚠️  Batch ${batchNum} failed: ${e.message}`);
     }
 
     await sleep(700);
   }
 
-  if (alerts.length === 0) {
-    log(`✅ Scan complete. No new pumps detected.`);
+  return allMarket;
+}
+
+// ── Apply dormant filters ──
+function filterDormant(coin) {
+  const mc = coin.market_cap;
+  const vol = coin.total_volume;
+  const athPct = coin.ath_change_percentage;
+  const c7 = coin.price_change_percentage_7d_in_currency;
+  const c30 = coin.price_change_percentage_30d_in_currency;
+
+  if (!mc || mc < MIN_MCAP || mc > MAX_MCAP) return null;
+  if (!athPct || Math.abs(athPct) < MIN_ATH_DROP) return null;
+  if (c7 == null || c7 < MIN_7D || c7 > MAX_7D) return null;
+  if (c30 == null || c30 < -30 || c30 > 30) return null;
+  if (!vol || vol > MAX_VOL) return null;
+
+  return {
+    symbol: (coin.symbol || '').toUpperCase(),
+    name: coin.name,
+    id: coin.id,
+    score: calcScore(coin),
+    price: coin.current_price,
+    market_cap: mc,
+    volume: vol,
+    ath_drop: Math.abs(athPct).toFixed(1),
+    c7: c7.toFixed(1),
+    c30: (c30 || 0).toFixed(1),
+    c7_raw: c7,
+  };
+}
+
+// ── INITIAL SCAN: show all dormant tokens ──
+async function initialScan() {
+  log('📋 INITIAL SCAN — finding all dormant tokens...');
+
+  await refreshBinanceCoins();
+  const allMarket = await fetchAllMarketData();
+
+  log(`📊 Got market data for ${allMarket.length} coins. Filtering...`);
+
+  const dormant = [];
+  for (const coin of allMarket) {
+    const result = filterDormant(coin);
+    if (result) dormant.push(result);
+  }
+
+  dormant.sort((a, b) => b.score - a.score);
+
+  log(`✅ Found ${dormant.length} dormant tokens`);
+
+  // Seed the alerted map with current 7d values
+  for (const t of dormant) {
+    alerted.set(t.id, { c7: t.c7_raw });
+  }
+
+  // Send full list to Telegram
+  if (dormant.length === 0) {
+    await sendTelegram('📋 <b>Dormant Scanner Started</b>\n\nNo dormant tokens found matching filters.');
     return;
   }
 
-  // Sort by 7d change descending
-  alerts.sort((a, b) => parseFloat(b.c7) - parseFloat(a.c7));
+  const hot = dormant.filter(t => t.score >= 70);
+  const watching = dormant.filter(t => t.score >= 45 && t.score < 70);
+  const cold = dormant.filter(t => t.score < 45);
 
-  log(`🚨 ${alerts.length} new pump alert(s)!`);
+  let msg = '📋 <b>DORMANT TOKEN SCAN — Full Report</b>\n';
+  msg += `📊 Scanned: ${allMarket.length} | Dormant: ${dormant.length}\n`;
+  msg += `🔥 Hot: ${hot.length} | 👀 Watch: ${watching.length} | ❄️ Cold: ${cold.length}\n`;
+  msg += `\nFilters: MCap $${(MIN_MCAP/1e6).toFixed(0)}M–$${(MAX_MCAP/1e6).toFixed(0)}M | ATH -${MIN_ATH_DROP}%+ | Vol <$${(MAX_VOL/1e6).toFixed(0)}M\n`;
 
-  // Build Telegram message
+  if (hot.length > 0) {
+    msg += `\n🔥 <b>HOT (Score 70+)</b>\n`;
+    for (const t of hot) {
+      msg += `\n<b>${t.symbol}</b> — Score: ${t.score}/100\n`;
+      msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Vol: ${fmtVol(t.volume)}\n`;
+      msg += `   📉 ATH: -${t.ath_drop}% | 7d: ${t.c7}% | 30d: ${t.c30}%\n`;
+      msg += `   <a href="https://www.coingecko.com/en/coins/${t.id}">Chart</a> · <a href="https://www.binance.com/en/trade/${t.symbol}_USDT">Trade</a>\n`;
+    }
+  }
+
+  if (watching.length > 0) {
+    msg += `\n👀 <b>WATCHING (Score 45-69)</b>\n`;
+    for (const t of watching) {
+      msg += `• <b>${t.symbol}</b> — ${t.score}pts | ${fmtPrice(t.price)} | 7d: ${t.c7}% | ATH: -${t.ath_drop}%\n`;
+    }
+  }
+
+  if (cold.length > 0) {
+    msg += `\n❄️ <b>COLD (Score <45)</b>\n`;
+    for (const t of cold) {
+      msg += `• ${t.symbol} — ${t.score}pts | ${fmtPrice(t.price)} | 7d: ${t.c7}%\n`;
+    }
+  }
+
+  msg += `\n⏰ Now monitoring every ${SCAN_INTERVAL/1000}s for pumps above +${PUMP_THRESHOLD}% 7d\n`;
+  msg += `⚠️ <i>Not financial advice. DYOR.</i>`;
+
+  await sendTelegram(msg);
+}
+
+// ── RECURRING SCAN: pump detection only ──
+async function pumpScan() {
+  if (Date.now() - lastCoinRefresh > COIN_REFRESH) {
+    await refreshBinanceCoins();
+  }
+
+  log(`📡 Pump check — ${binanceCoins.length} coins...`);
+
+  const allMarket = await fetchAllMarketData();
+  const alerts = [];
+
+  for (const coin of allMarket) {
+    const result = filterDormant(coin);
+    if (!result) continue;
+
+    // Only care about tokens crossing pump threshold
+    if (result.c7_raw < PUMP_THRESHOLD) continue;
+
+    // Only alert if going higher than last alert
+    const prev = alerted.get(coin.id);
+    if (prev && result.c7_raw <= prev.c7) continue;
+
+    const prevC7 = prev ? prev.c7 : null;
+    alerted.set(coin.id, { c7: result.c7_raw });
+
+    alerts.push({
+      ...result,
+      prevC7: prevC7 != null ? prevC7.toFixed(1) : null,
+    });
+  }
+
+  if (alerts.length === 0) {
+    log(`✅ No new pumps.`);
+    return;
+  }
+
+  alerts.sort((a, b) => b.c7_raw - a.c7_raw);
+
+  log(`🚨 ${alerts.length} pump alert(s)!`);
+
   let msg = `🚨 <b>PUMP ALERT — ${alerts.length} token${alerts.length > 1 ? 's' : ''} moving!</b>\n`;
-  msg += `<i>7d change crossed +${PUMP_THRESHOLD}% on dormant Binance tokens</i>\n`;
+  msg += `<i>7d change crossed +${PUMP_THRESHOLD}%</i>\n`;
 
   for (const t of alerts.slice(0, 20)) {
     const status = t.score >= 70 ? '🔥' : t.score >= 45 ? '👀' : '📊';
-    const trend = t.prevC7 ? ` (was +${t.prevC7}% ↗️ now +${t.c7}%)` : '';
     const label = t.prevC7 ? '📈 STILL CLIMBING' : '🆕 NEW';
+    const trend = t.prevC7 ? ` (was +${t.prevC7}% ↗️ now +${t.c7}%)` : '';
     msg += `\n${status} <b>${t.symbol}</b> (${t.name}) — ${label}\n`;
     msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Vol: ${fmtVol(t.volume)}\n`;
     msg += `   📈 <b>7d: +${t.c7}%</b>${trend} | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
@@ -255,21 +382,30 @@ async function run() {
   console.log('║   Binance Dormant Token Pump Scanner     ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
-  log(`Config:`);
+  log('Config:');
+  log(`  Ticker pages: ${TICKER_PAGES}`);
+  log(`  MCap: $${(MIN_MCAP/1e6).toFixed(0)}M – $${(MAX_MCAP/1e6).toFixed(0)}M`);
+  log(`  ATH drop: ${MIN_ATH_DROP}%+`);
+  log(`  7d range: ${MIN_7D}% to ${MAX_7D}%`);
+  log(`  Max volume: $${(MAX_VOL/1e6).toFixed(0)}M`);
+  log(`  Pump threshold: +${PUMP_THRESHOLD}% (7d)`);
   log(`  Scan interval: ${SCAN_INTERVAL / 1000}s`);
   log(`  Coin refresh: ${COIN_REFRESH / 1000}s`);
-  log(`  Pump threshold: +${PUMP_THRESHOLD}% (7d)`);
-  log(`  Re-alert: only when 7d% goes higher than last alert`);
-  log(`  Telegram: ${TG_TOKEN && TG_TOKEN !== 'your_bot_token_here' ? '✅ configured' : '❌ not configured (console only)'}`);
+  log(`  Telegram: ${TG_TOKEN && TG_TOKEN !== 'your_bot_token_here' ? '✅' : '❌ (console only)'}`);
   console.log('');
 
-  // Initial scan
-  await scanOnce();
+  // Step 1: Full initial scan — send all dormant tokens
+  await initialScan();
+  isFirstRun = false;
 
-  // Loop
+  log('');
+  log(`🔁 Starting pump monitoring every ${SCAN_INTERVAL / 1000}s...`);
+  log('');
+
+  // Step 2: Loop — pump detection only
   setInterval(async () => {
     try {
-      await scanOnce();
+      await pumpScan();
     } catch (e) {
       log(`❌ Scan error: ${e.message}`);
     }
