@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Binance Dormant Token Pump Scanner</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg2: #161b22;
+  --bg3: #1c2333;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text2: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --orange: #d29922;
+  --purple: #bc8cff;
+  --hot: #ff6b35;
+  --watch: #58a6ff;
+  --radius: 8px;
+  --shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f8fa;
+    --bg2: #ffffff;
+    --bg3: #eef1f5;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text2: #656d76;
+    --shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+.container { max-width: 1440px; margin: 0 auto; padding: 20px; }
+header {
+  text-align: center;
+  padding: 30px 0 20px;
+}
+header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+header p { color: var(--text2); margin-top: 6px; font-size: 14px; }
+
+/* Controls Panel */
+.controls-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.controls-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.control-group label {
+  display: block;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 4px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.control-group input, .control-group select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.control-group input:focus, .control-group select:focus {
+  border-color: var(--accent);
+}
+.btn-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  color: #fff;
+}
+.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-secondary {
+  background: var(--bg3);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { border-color: var(--accent); }
+
+/* Progress */
+.progress-section {
+  display: none;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.progress-section.active { display: block; }
+.progress-bar-outer {
+  width: 100%;
+  height: 8px;
+  background: var(--bg3);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.progress-bar-inner {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--purple));
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.progress-text {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+.progress-text .step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.progress-text .step.done { color: var(--green); }
+.progress-text .step.active { color: var(--accent); }
+.progress-text .step.pending { color: var(--text2); opacity: 0.5; }
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Summary Bar */
+.summary-bar {
+  display: none;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.summary-bar.active { display: grid; }
+.stat-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+.stat-card .val {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.stat-card .lbl {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat-card.hot .val { color: var(--hot); }
+.stat-card.watch .val { color: var(--watch); }
+
+/* Filter Row */
+.filter-row {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.filter-row.active { display: flex; }
+.chip {
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text2);
+  transition: all 0.2s;
+}
+.chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.chip:hover { border-color: var(--accent); }
+.search-box {
+  margin-left: auto;
+  padding: 6px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  min-width: 200px;
+  transition: border-color 0.2s;
+}
+.search-box:focus { border-color: var(--accent); }
+
+/* Table */
+.table-wrap {
+  display: none;
+  overflow-x: auto;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.table-wrap.active { display: block; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg3);
+  padding: 12px 14px;
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text2);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+thead th:hover { color: var(--accent); }
+thead th.sorted-asc::after { content: ' ▲'; font-size: 9px; }
+thead th.sorted-desc::after { content: ' ▼'; font-size: 9px; }
+tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+tbody tr:hover { background: var(--bg3); }
+td {
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+.token-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.token-cell img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.token-cell .info { display: flex; flex-direction: column; }
+.token-cell .sym { font-weight: 600; font-size: 13px; }
+.token-cell .name { font-size: 11px; color: var(--text2); max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.pct-green { color: var(--green); }
+.pct-red { color: var(--red); }
+
+/* Score dot */
+.score-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+.score-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.score-dot.hot { background: var(--hot); box-shadow: 0 0 6px var(--hot); }
+.score-dot.watch { background: var(--watch); box-shadow: 0 0 6px var(--watch); }
+.score-dot.low { background: var(--text2); }
+
+/* Status badge */
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.badge.hot { background: rgba(255,107,53,0.15); color: var(--hot); }
+.badge.watch { background: rgba(88,166,255,0.15); color: var(--watch); }
+.badge.cold { background: rgba(139,148,158,0.12); color: var(--text2); }
+
+a.coin-link {
+  color: inherit;
+  text-decoration: none;
+}
+a.coin-link:hover { color: var(--accent); text-decoration: underline; }
+
+/* Disclaimer */
+.disclaimer {
+  text-align: center;
+  padding: 20px;
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 20px;
+}
+
+/* Error */
+.error-msg {
+  display: none;
+  background: rgba(248,81,73,0.1);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  color: var(--red);
+  font-size: 14px;
+}
+.error-msg.active { display: block; }
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text2);
+}
+.empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+.empty-state p { font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Binance Dormant Token Pump Scanner</h1>
+    <p>Identify low-cap, high-potential tokens listed on Binance that are dormant and primed for movement</p>
+  </header>
+
+  <div class="error-msg" id="errorMsg"></div>
+
+  <div class="controls-panel">
+    <div class="controls-grid">
+      <div class="control-group">
+        <label>Min Market Cap ($)</label>
+        <input type="number" id="cfgMinMcap" value="5000000" min="0" step="1000000">
+      </div>
+      <div class="control-group">
+        <label>Max Market Cap ($)</label>
+        <input type="number" id="cfgMaxMcap" value="200000000" min="0" step="1000000">
+      </div>
+      <div class="control-group">
+        <label>Min ATH Drop (%)</label>
+        <input type="number" id="cfgMinAthDrop" value="70" min="0" max="100">
+      </div>
+      <div class="control-group">
+        <label>Min 7d Change (%)</label>
+        <input type="number" id="cfgMin7d" value="-15" step="1">
+      </div>
+      <div class="control-group">
+        <label>Max 7d Change (%)</label>
+        <input type="number" id="cfgMax7d" value="25" step="1">
+      </div>
+      <div class="control-group">
+        <label>Max 24h Volume ($)</label>
+        <input type="number" id="cfgMaxVol" value="2000000" min="0" step="100000">
+      </div>
+      <div class="control-group">
+        <label>Pages to Fetch</label>
+        <input type="number" id="cfgPages" value="6" min="1" max="20">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btnFetch" onclick="startScan()">Fetch Live Data</button>
+      <button class="btn btn-secondary" id="btnReset" onclick="resetAll()" style="display:none;">Reset</button>
+      <span id="lastFetchTime" style="font-size:12px;color:var(--text2);"></span>
+    </div>
+  </div>
+
+  <div class="progress-section" id="progressSection">
+    <div class="progress-bar-outer">
+      <div class="progress-bar-inner" id="progressBar"></div>
+    </div>
+    <div class="progress-text" id="progressText"></div>
+  </div>
+
+  <div class="summary-bar" id="summaryBar">
+    <div class="stat-card"><div class="val" id="statScanned">0</div><div class="lbl">Tokens Scanned</div></div>
+    <div class="stat-card"><div class="val" id="statBinance">0</div><div class="lbl">On Binance</div></div>
+    <div class="stat-card"><div class="val" id="statDormant">0</div><div class="lbl">Dormant Candidates</div></div>
+    <div class="stat-card hot"><div class="val" id="statHot">0</div><div class="lbl">Hot (70+)</div></div>
+    <div class="stat-card watch"><div class="val" id="statWatch">0</div><div class="lbl">Watching (45-69)</div></div>
+  </div>
+
+  <div class="filter-row" id="filterRow">
+    <div class="chip active" data-filter="all" onclick="setFilter('all',this)">All</div>
+    <div class="chip" data-filter="hot" onclick="setFilter('hot',this)">Hot (70+)</div>
+    <div class="chip" data-filter="watch" onclick="setFilter('watch',this)">Watching (45-69)</div>
+    <input type="text" class="search-box" id="searchBox" placeholder="Search by ticker..." oninput="applyFilters()">
+  </div>
+
+  <div class="table-wrap" id="tableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-col="rank" onclick="sortBy('rank')">#</th>
+          <th data-col="token" onclick="sortBy('token')">Token</th>
+          <th data-col="market_cap" onclick="sortBy('market_cap')">Market Cap</th>
+          <th data-col="volume" onclick="sortBy('volume')">24h Volume</th>
+          <th data-col="ath_drop" onclick="sortBy('ath_drop')">% Below ATH</th>
+          <th data-col="change_7d" onclick="sortBy('change_7d')">7d %</th>
+          <th data-col="change_30d" onclick="sortBy('change_30d')">30d %</th>
+          <th data-col="price" onclick="sortBy('price')">Price</th>
+          <th data-col="score" class="sorted-desc" onclick="sortBy('score')">Score</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="empty-state" id="emptyState" style="display:none;">
+    <div class="icon">&#128269;</div>
+    <p>No tokens match the current filters.</p>
+  </div>
+
+  <div class="disclaimer">
+    Not financial advice. Data from CoinGecko free API. Scores are algorithmic estimates, not buy/sell signals. Always DYOR.
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+// State
+let allResults = [];
+let currentFilter = 'all';
+let currentSort = { col: 'score', dir: 'desc' };
+let scanning = false;
+
+// Helpers
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function fmt$(n) {
+  if (n == null) return '—';
+  if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
+  return '$' + n.toFixed(2);
+}
+
+function fmtPrice(n) {
+  if (n == null) return '—';
+  if (n < 0.0001) return '$' + n.toExponential(2);
+  if (n < 0.01) return '$' + n.toFixed(6);
+  if (n < 1) return '$' + n.toFixed(4);
+  return '$' + n.toFixed(2);
+}
+
+function fmtPct(n) {
+  if (n == null) return '—';
+  return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.classList.add('active');
+}
+
+function hideError() {
+  document.getElementById('errorMsg').classList.remove('active');
+}
+
+// Progress management
+const steps = [];
+function initProgress(labels) {
+  steps.length = 0;
+  const container = document.getElementById('progressText');
+  container.innerHTML = '';
+  labels.forEach((lbl, i) => {
+    const div = document.createElement('div');
+    div.className = 'step pending';
+    div.innerHTML = '<span class="step-icon">&#9675;</span> ' + lbl;
+    container.appendChild(div);
+    steps.push({ el: div, label: lbl });
+  });
+  document.getElementById('progressSection').classList.add('active');
+  setProgress(0);
+}
+
+function setStepActive(i) {
+  if (steps[i]) {
+    steps[i].el.className = 'step active';
+    steps[i].el.innerHTML = '<span class="spinner"></span> ' + steps[i].label;
+  }
+}
+
+function setStepDone(i, extra) {
+  if (steps[i]) {
+    steps[i].el.className = 'step done';
+    steps[i].el.innerHTML = '&#10003; ' + steps[i].label + (extra ? ' — ' + extra : '');
+  }
+}
+
+function updateStepText(i, text) {
+  if (steps[i]) {
+    steps[i].el.innerHTML = '<span class="spinner"></span> ' + text;
+  }
+}
+
+function setProgress(pct) {
+  document.getElementById('progressBar').style.width = pct + '%';
+}
+
+// API config — always Pro
+const API_KEY = (typeof CONFIG !== 'undefined' && CONFIG.COINGECKO_API_KEY) || '';
+const API_BASE = 'https://pro-api.coingecko.com/api/v3';
+
+// Fetch with retry
+async function fetchJSON(url, retries = 3) {
+  const headers = { 'x-cg-pro-api-key': API_KEY };
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, { headers });
+      if (res.status === 429) {
+        const wait = 2000 * attempt;
+        await sleep(wait);
+        continue;
+      }
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('Invalid API key or wrong plan selected (HTTP ' + res.status + '). Check your key and Demo/Pro setting.');
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } catch (e) {
+      if (attempt === retries) throw e;
+      await sleep(1000 * attempt);
+    }
+  }
+}
+
+// Scoring
+function calcScore(t) {
+  let score = 0;
+
+  // Market cap
+  if (t.market_cap >= 5e6 && t.market_cap <= 50e6) score += 25;
+  else if (t.market_cap > 50e6 && t.market_cap <= 150e6) score += 15;
+
+  // Volume
+  if (t.total_volume < 200000) score += 22;
+  else if (t.total_volume < 500000) score += 14;
+  else if (t.total_volume < 1500000) score += 6;
+
+  // ATH drop
+  const athDrop = Math.abs(t.ath_change_percentage || 0);
+  if (athDrop >= 90) score += 18;
+  else if (athDrop >= 80) score += 13;
+  else if (athDrop >= 70) score += 8;
+
+  // 7d flatness
+  const c7 = t.price_change_percentage_7d_in_currency;
+  if (c7 != null && c7 >= -5 && c7 <= 8) score += 12;
+
+  // 30d flatness
+  const c30 = t.price_change_percentage_30d_in_currency;
+  if (c30 != null && c30 >= -10 && c30 <= 5) score += 10;
+
+  // Binance confirmed
+  score += 13;
+
+  return score;
+}
+
+function getStatus(score) {
+  if (score >= 70) return 'hot';
+  if (score >= 45) return 'watch';
+  return 'cold';
+}
+
+// Main scan
+async function startScan() {
+  if (scanning) return;
+
+  if (!API_KEY || API_KEY === 'YOUR_KEY_HERE') {
+    showError('Missing API key. Copy config.example.js to config.js and add your CoinGecko Pro API key.');
+    return;
+  }
+
+  scanning = true;
+  hideError();
+  allResults = [];
+
+  const btn = document.getElementById('btnFetch');
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+
+  const cfgPages = parseInt(document.getElementById('cfgPages').value) || 6;
+  const cfgMinMcap = parseFloat(document.getElementById('cfgMinMcap').value) || 5e6;
+  const cfgMaxMcap = parseFloat(document.getElementById('cfgMaxMcap').value) || 200e6;
+  const cfgMinAthDrop = parseFloat(document.getElementById('cfgMinAthDrop').value) || 70;
+  const cfgMin7d = parseFloat(document.getElementById('cfgMin7d').value);
+  const cfgMax7d = parseFloat(document.getElementById('cfgMax7d').value);
+  const cfgMaxVol = parseFloat(document.getElementById('cfgMaxVol').value) || 2e6;
+
+  initProgress([
+    'Fetching Binance tickers from CoinGecko (' + cfgPages + ' pages)',
+    'Deduplicating and mapping coin IDs',
+    'Fetching market data for discovered coins',
+    'Applying dormant filters and scoring',
+    'Done'
+  ]);
+
+  try {
+    // Step 1: Fetch Binance tickers
+    setStepActive(0);
+    const coinMap = new Map(); // coin_id -> { symbol, base }
+    let totalTickers = 0;
+
+    for (let page = 1; page <= cfgPages; page++) {
+      updateStepText(0, `Fetching Binance tickers — page ${page}/${cfgPages} (${totalTickers} tickers so far)`);
+      setProgress((page / cfgPages) * 25);
+
+      const url = `${API_BASE}/exchanges/binance/tickers?page=${page}`;
+      const data = await fetchJSON(url);
+
+      if (data && data.tickers) {
+        for (const t of data.tickers) {
+          if (t.target === 'USDT' && t.coin_id) {
+            coinMap.set(t.coin_id, { symbol: t.base, coinId: t.coin_id });
+          }
+        }
+        totalTickers += data.tickers.length;
+      }
+
+      // Rate limit delay
+      if (page < cfgPages) await sleep(700);
+    }
+
+    setStepDone(0, totalTickers + ' tickers fetched');
+
+    // Step 2: Deduplicate
+    setStepActive(1);
+    const uniqueCoins = Array.from(coinMap.values());
+    const coinIds = uniqueCoins.map(c => c.coinId);
+    setStepDone(1, uniqueCoins.length + ' unique USDT pairs found');
+    setProgress(30);
+
+    // Step 3: Fetch market data in batches of 50
+    setStepActive(2);
+    const batchSize = 50;
+    const batches = [];
+    for (let i = 0; i < coinIds.length; i += batchSize) {
+      batches.push(coinIds.slice(i, i + batchSize));
+    }
+
+    let allMarketData = [];
+    for (let i = 0; i < batches.length; i++) {
+      updateStepText(2, `Fetching market data — batch ${i + 1}/${batches.length} (${allMarketData.length} coins loaded)`);
+      setProgress(30 + (i / batches.length) * 50);
+
+      const ids = batches[i].join(',');
+      const url = `${API_BASE}/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=7d,30d&per_page=${batchSize}&page=1`;
+
+      try {
+        const data = await fetchJSON(url);
+        if (Array.isArray(data)) {
+          allMarketData = allMarketData.concat(data);
+        }
+      } catch (e) {
+        // Skip failed batch, continue
+        console.warn('Batch failed:', e);
+      }
+
+      if (i < batches.length - 1) await sleep(700);
+    }
+
+    setStepDone(2, allMarketData.length + ' coins with market data');
+    setProgress(82);
+
+    // Step 4: Filter and score
+    setStepActive(3);
+
+    const candidates = [];
+    for (const coin of allMarketData) {
+      const mc = coin.market_cap;
+      const vol = coin.total_volume;
+      const athPct = coin.ath_change_percentage; // negative number like -85
+      const c7 = coin.price_change_percentage_7d_in_currency;
+      const c30 = coin.price_change_percentage_30d_in_currency;
+
+      // Filters
+      if (mc == null || mc < cfgMinMcap || mc > cfgMaxMcap) continue;
+      if (athPct == null || Math.abs(athPct) < cfgMinAthDrop) continue;
+      if (c7 == null || c7 < cfgMin7d || c7 > cfgMax7d) continue;
+      if (c30 == null || c30 < -30 || c30 > 30) continue;
+      if (vol == null || vol > cfgMaxVol) continue;
+
+      const score = calcScore(coin);
+      candidates.push({
+        id: coin.id,
+        symbol: (coin.symbol || '').toUpperCase(),
+        name: coin.name,
+        image: coin.image,
+        market_cap: mc,
+        total_volume: vol,
+        ath_change_percentage: athPct,
+        price_change_percentage_7d_in_currency: c7,
+        price_change_percentage_30d_in_currency: c30,
+        current_price: coin.current_price,
+        score: score,
+        status: getStatus(score)
+      });
+    }
+
+    // Sort by score descending, take top 300
+    candidates.sort((a, b) => b.score - a.score);
+    allResults = candidates.slice(0, 300);
+
+    setStepDone(3, candidates.length + ' dormant candidates scored');
+    setProgress(95);
+
+    // Step 5: Done
+    setStepDone(4);
+    setProgress(100);
+
+    // Update summary
+    const hotCount = allResults.filter(r => r.status === 'hot').length;
+    const watchCount = allResults.filter(r => r.status === 'watch').length;
+
+    document.getElementById('statScanned').textContent = allMarketData.length;
+    document.getElementById('statBinance').textContent = uniqueCoins.length;
+    document.getElementById('statDormant').textContent = allResults.length;
+    document.getElementById('statHot').textContent = hotCount;
+    document.getElementById('statWatch').textContent = watchCount;
+
+    document.getElementById('summaryBar').classList.add('active');
+    document.getElementById('filterRow').classList.add('active');
+    document.getElementById('tableWrap').classList.add('active');
+    document.getElementById('btnReset').style.display = '';
+    document.getElementById('lastFetchTime').textContent = 'Last fetch: ' + new Date().toLocaleTimeString();
+
+    renderTable();
+
+  } catch (e) {
+    showError('Scan failed: ' + e.message + '. The CoinGecko free API may be rate-limited — please wait a minute and try again.');
+    console.error(e);
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Fetch Live Data';
+  scanning = false;
+}
+
+// Rendering
+function renderTable() {
+  const search = document.getElementById('searchBox').value.toUpperCase().trim();
+
+  let data = allResults.filter(r => {
+    if (currentFilter === 'hot' && r.status !== 'hot') return false;
+    if (currentFilter === 'watch' && r.status !== 'watch') return false;
+    if (search && !r.symbol.includes(search) && !r.name.toUpperCase().includes(search)) return false;
+    return true;
+  });
+
+  // Sort
+  const col = currentSort.col;
+  const dir = currentSort.dir === 'asc' ? 1 : -1;
+  data.sort((a, b) => {
+    let va, vb;
+    switch (col) {
+      case 'rank': va = a.score; vb = b.score; return (vb - va) * dir; // rank is derived from score
+      case 'token': va = a.symbol; vb = b.symbol; return va.localeCompare(vb) * dir;
+      case 'market_cap': va = a.market_cap; vb = b.market_cap; break;
+      case 'volume': va = a.total_volume; vb = b.total_volume; break;
+      case 'ath_drop': va = Math.abs(a.ath_change_percentage); vb = Math.abs(b.ath_change_percentage); break;
+      case 'change_7d': va = a.price_change_percentage_7d_in_currency; vb = b.price_change_percentage_7d_in_currency; break;
+      case 'change_30d': va = a.price_change_percentage_30d_in_currency; vb = b.price_change_percentage_30d_in_currency; break;
+      case 'price': va = a.current_price; vb = b.current_price; break;
+      case 'score': va = a.score; vb = b.score; break;
+      default: va = a.score; vb = b.score;
+    }
+    return ((va || 0) - (vb || 0)) * dir;
+  });
+
+  const tbody = document.getElementById('tableBody');
+  const emptyState = document.getElementById('emptyState');
+
+  if (data.length === 0) {
+    tbody.innerHTML = '';
+    emptyState.style.display = 'block';
+    return;
+  }
+  emptyState.style.display = 'none';
+
+  const rows = data.map((r, i) => {
+    const athDrop = Math.abs(r.ath_change_percentage).toFixed(1);
+    const c7 = r.price_change_percentage_7d_in_currency;
+    const c30 = r.price_change_percentage_30d_in_currency;
+    const c7class = c7 >= 0 ? 'pct-green' : 'pct-red';
+    const c30class = c30 >= 0 ? 'pct-green' : 'pct-red';
+    const dotClass = r.status;
+    const badgeClass = r.status;
+    const badgeLabel = r.status === 'hot' ? 'HOT' : r.status === 'watch' ? 'WATCH' : 'COLD';
+    const cgUrl = 'https://www.coingecko.com/en/coins/' + r.id;
+
+    return `<tr>
+      <td>${i + 1}</td>
+      <td>
+        <a href="${cgUrl}" target="_blank" rel="noopener" class="coin-link">
+          <div class="token-cell">
+            <img src="${r.image}" alt="" loading="lazy" onerror="this.style.display='none'">
+            <div class="info">
+              <span class="sym">${r.symbol}</span>
+              <span class="name">${r.name}</span>
+            </div>
+          </div>
+        </a>
+      </td>
+      <td>${fmt$(r.market_cap)}</td>
+      <td>${fmt$(r.total_volume)}</td>
+      <td class="pct-red">${athDrop}%</td>
+      <td class="${c7class}">${fmtPct(c7)}</td>
+      <td class="${c30class}">${fmtPct(c30)}</td>
+      <td>${fmtPrice(r.current_price)}</td>
+      <td>
+        <div class="score-cell">
+          <span class="score-dot ${dotClass}"></span>
+          ${r.score}
+        </div>
+      </td>
+      <td><span class="badge ${badgeClass}">${badgeLabel}</span></td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = rows.join('');
+}
+
+// Filter and sort handlers
+function setFilter(filter, el) {
+  currentFilter = filter;
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  applyFilters();
+}
+
+function applyFilters() {
+  renderTable();
+}
+
+function sortBy(col) {
+  // Toggle direction if same column
+  if (currentSort.col === col) {
+    currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    currentSort.col = col;
+    currentSort.dir = 'desc';
+  }
+
+  // Update header classes
+  document.querySelectorAll('thead th').forEach(th => {
+    th.classList.remove('sorted-asc', 'sorted-desc');
+    if (th.dataset.col === col) {
+      th.classList.add(currentSort.dir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+    }
+  });
+
+  renderTable();
+}
+
+function resetAll() {
+  allResults = [];
+  currentFilter = 'all';
+  document.getElementById('summaryBar').classList.remove('active');
+  document.getElementById('filterRow').classList.remove('active');
+  document.getElementById('tableWrap').classList.remove('active');
+  document.getElementById('progressSection').classList.remove('active');
+  document.getElementById('btnReset').style.display = 'none';
+  document.getElementById('lastFetchTime').textContent = '';
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('searchBox').value = '';
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  document.querySelector('.chip[data-filter="all"]').classList.add('active');
+  hideError();
+}
+</script>
+</body>
+</html>
