@@ -60,19 +60,19 @@ async function sendTelegram(text) {
     return;
   }
 
-  // Telegram max is 4096 chars — split if needed
+  // Telegram max is 4096 chars — split on blank lines to avoid breaking HTML tags
   const chunks = [];
   if (text.length <= 4096) {
     chunks.push(text);
   } else {
-    const lines = text.split('\n');
+    const sections = text.split('\n\n');
     let chunk = '';
-    for (const line of lines) {
-      if ((chunk + '\n' + line).length > 4000) {
-        chunks.push(chunk);
-        chunk = line;
+    for (const section of sections) {
+      if ((chunk + '\n\n' + section).length > 3800) {
+        if (chunk) chunks.push(chunk);
+        chunk = section;
       } else {
-        chunk += (chunk ? '\n' : '') + line;
+        chunk += (chunk ? '\n\n' : '') + section;
       }
     }
     if (chunk) chunks.push(chunk);
@@ -280,7 +280,7 @@ async function initialScan() {
   let msg = '📋 <b>DORMANT TOKEN SCAN — Full Report</b>\n';
   msg += `📊 Scanned: ${allMarket.length} | Dormant: ${dormant.length}\n`;
   msg += `🔥 Hot: ${hot.length} | 👀 Watch: ${watching.length} | ❄️ Cold: ${cold.length}\n`;
-  msg += `\nFilters: MCap $${(MIN_MCAP/1e6).toFixed(0)}M–$${(MAX_MCAP/1e6).toFixed(0)}M | ATH -${MIN_ATH_DROP}%+ | Vol <$${(MAX_VOL/1e6).toFixed(0)}M\n`;
+  msg += `\nFilters: MCap $${(MIN_MCAP/1e6).toFixed(0)}M–$${(MAX_MCAP/1e6).toFixed(0)}M | ATH -${MIN_ATH_DROP}%+ | Vol under $${(MAX_VOL/1e6).toFixed(0)}M\n`;
 
   if (hot.length > 0) {
     msg += `\n🔥 <b>HOT (Score 70+)</b>\n`;
@@ -330,12 +330,13 @@ async function pumpScan() {
     // Only care about tokens crossing pump threshold
     if (result.c7_raw < PUMP_THRESHOLD) continue;
 
-    // Only alert if going higher than last alert
+    // Only alert if going meaningfully higher than last alert (0.5%+ increase)
     const prev = alerted.get(coin.id);
-    if (prev && result.c7_raw <= prev.c7) continue;
+    const rounded = Math.round(result.c7_raw * 10) / 10;
+    if (prev && rounded <= prev.c7 + 0.5) continue;
 
     const prevC7 = prev ? prev.c7 : null;
-    alerted.set(coin.id, { c7: result.c7_raw });
+    alerted.set(coin.id, { c7: rounded });
 
     alerts.push({
       ...result,
