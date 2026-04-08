@@ -296,7 +296,8 @@ async function pumpScan() {
   log(`📡 Pump check — ${binanceCoins.length} coins...`);
 
   const allMarket = await fetchAllMarketData();
-  const alerts = [];
+  const newCrossings = [];
+  const stillClimbing = [];
 
   const now = Date.now();
   const SIX_MONTHS = 180 * 24 * 60 * 60 * 1000;
@@ -326,49 +327,63 @@ async function pumpScan() {
     const c7 = coin.price_change_percentage_7d_in_currency ?? 0;
     const c30 = coin.price_change_percentage_30d_in_currency ?? 0;
     const ageYears = (age / (365 * 24 * 60 * 60 * 1000)).toFixed(1);
+    const sym = (coin.symbol || '').toUpperCase();
 
-    alerts.push({
-      symbol: (coin.symbol || '').toUpperCase(),
-      name: coin.name,
-      id: coin.id,
-      price: coin.current_price,
-      market_cap: coin.market_cap,
-      volume: coin.total_volume,
-      c24: c24.toFixed(1),
-      c24_raw: c24,
-      c7: c7.toFixed(1),
-      c30: c30.toFixed(1),
-      ath_drop: Math.abs(coin.ath_change_percentage || 0).toFixed(1),
-      ageYears,
-      prevC24: prevC24 != null ? prevC24.toFixed(1) : null,
-    });
+    // Was below threshold last check → just crossed = NEW
+    // Was already above threshold → still climbing = one-liner
+    const justCrossed = prevC24 == null || prevC24 < PUMP_THRESHOLD;
+
+    if (justCrossed) {
+      newCrossings.push({
+        symbol: sym, name: coin.name, id: coin.id,
+        price: coin.current_price, market_cap: coin.market_cap,
+        c24: c24.toFixed(1), c7: c7.toFixed(1), c30: c30.toFixed(1),
+        ath_drop: Math.abs(coin.ath_change_percentage || 0).toFixed(1),
+        ageYears,
+        prevC24: prevC24 != null ? prevC24.toFixed(1) : null,
+      });
+    } else {
+      stillClimbing.push({
+        symbol: sym,
+        prevC24: prevC24.toFixed(1),
+        c24: c24.toFixed(1),
+      });
+    }
   }
 
-  if (alerts.length === 0) {
+  if (newCrossings.length === 0 && stillClimbing.length === 0) {
     log(`✅ No new pumps.`);
     return;
   }
 
-  alerts.sort((a, b) => b.c24_raw - a.c24_raw);
+  log(`🚨 ${newCrossings.length} new crossing(s), ${stillClimbing.length} still climbing`);
 
-  log(`🚨 ${alerts.length} pump alert(s)!`);
+  // Build message
+  let msg = '';
 
-  let msg = `🚨 <b>PUMP ALERT — ${alerts.length} token${alerts.length > 1 ? 's' : ''} moving!</b>\n`;
-  msg += `<i>24h change crossed +${PUMP_THRESHOLD}%</i>\n`;
+  if (newCrossings.length > 0) {
+    newCrossings.sort((a, b) => parseFloat(b.c24) - parseFloat(a.c24));
+    msg += `🚨 <b>NEW +${PUMP_THRESHOLD}% CROSSINGS</b>\n`;
 
-  for (const t of alerts.slice(0, 20)) {
-    const label = t.prevC24 ? '📈 STILL CLIMBING' : '🆕 NEW';
-    msg += `\n🚀 <b>${t.symbol}</b> (${t.name}) — ${label}\n`;
-    msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Age: ${t.ageYears}y\n`;
-    msg += `   📈 <b>24h: +${t.c24}%</b> | 7d: ${t.c7}% | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
-    if (t.prevC24) {
-      msg += `   ↗️ 24h was +${t.prevC24}% → now +${t.c24}%\n`;
+    for (const t of newCrossings.slice(0, 15)) {
+      msg += `\n🚀 <b>${t.symbol}</b> (${t.name}) — JUST CROSSED +${PUMP_THRESHOLD}%\n`;
+      msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Age: ${t.ageYears}y\n`;
+      msg += `   📈 24h: was +${t.prevC24 || '0.0'}% → <b>now +${t.c24}%</b>\n`;
+      msg += `   7d: ${t.c7}% | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
+      msg += `   <a href="https://www.coingecko.com/en/coins/${t.id}">Chart</a> · <a href="https://www.binance.com/en/trade/${t.symbol}_USDT">Trade</a>\n`;
     }
-    msg += `   <a href="https://www.coingecko.com/en/coins/${t.id}">Chart</a> · <a href="https://www.binance.com/en/trade/${t.symbol}_USDT">Trade</a>\n`;
   }
 
-  if (alerts.length > 20) {
-    msg += `\n<i>+${alerts.length - 20} more...</i>\n`;
+  if (stillClimbing.length > 0) {
+    stillClimbing.sort((a, b) => parseFloat(b.c24) - parseFloat(a.c24));
+    msg += `\n———————————\n`;
+    msg += `📊 <b>Still climbing:</b>\n`;
+    for (const t of stillClimbing.slice(0, 20)) {
+      msg += `• <b>${t.symbol}</b>: +${t.prevC24}% → +${t.c24}%\n`;
+    }
+    if (stillClimbing.length > 20) {
+      msg += `<i>+${stillClimbing.length - 20} more...</i>\n`;
+    }
   }
 
   msg += `\n⚠️ <i>Not financial advice. DYOR.</i>`;
@@ -385,11 +400,7 @@ async function run() {
   console.log('');
   log('Config:');
   log(`  Ticker pages: ${TICKER_PAGES}`);
-  log(`  MCap: $${(MIN_MCAP/1e6).toFixed(0)}M – $${(MAX_MCAP/1e6).toFixed(0)}M`);
-  log(`  ATH drop: ${MIN_ATH_DROP}%+`);
-  log(`  7d range: ${MIN_7D}% to ${MAX_7D}%`);
-  log(`  Max volume: $${(MAX_VOL/1e6).toFixed(0)}M`);
-  log(`  Pump threshold: +${PUMP_THRESHOLD}% (7d)`);
+  log(`  Pump threshold: +${PUMP_THRESHOLD}% (24h)`);
   log(`  Scan interval: ${SCAN_INTERVAL / 1000}s`);
   log(`  Coin refresh: ${COIN_REFRESH / 1000}s`);
   log(`  Telegram: ${TG_TOKEN && TG_TOKEN !== 'your_bot_token_here' ? '✅' : '❌ (console only)'}`);
