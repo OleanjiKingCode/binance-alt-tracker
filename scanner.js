@@ -328,22 +328,34 @@ async function pumpScan() {
   const alerts = [];
 
   for (const coin of allMarket) {
-    const result = filterDormant(coin);
-    if (!result) continue;
+    const c24 = coin.price_change_percentage_24h_in_currency ?? coin.price_change_percentage_24h ?? 0;
 
-    // 24h must be above pump threshold
-    if (result.c24_raw < PUMP_THRESHOLD) continue;
+    // Any Binance token up 10%+ in 24h
+    if (c24 < PUMP_THRESHOLD) continue;
 
     // Only alert if 24h going meaningfully higher than last alert
     const prev = alerted.get(coin.id);
-    const r24 = Math.round(result.c24_raw * 10) / 10;
+    const r24 = Math.round(c24 * 10) / 10;
     if (prev && r24 <= prev.c24 + 0.5) continue;
 
     const prevC24 = prev ? prev.c24 : null;
-    alerted.set(coin.id, { c24: r24, c7: Math.round(result.c7_raw * 10) / 10 });
+    alerted.set(coin.id, { c24: r24 });
+
+    const c7 = coin.price_change_percentage_7d_in_currency ?? 0;
+    const c30 = coin.price_change_percentage_30d_in_currency ?? 0;
 
     alerts.push({
-      ...result,
+      symbol: (coin.symbol || '').toUpperCase(),
+      name: coin.name,
+      id: coin.id,
+      price: coin.current_price,
+      market_cap: coin.market_cap,
+      volume: coin.total_volume,
+      c24: c24.toFixed(1),
+      c24_raw: c24,
+      c7: c7.toFixed(1),
+      c30: c30.toFixed(1),
+      ath_drop: Math.abs(coin.ath_change_percentage || 0).toFixed(1),
       prevC24: prevC24 != null ? prevC24.toFixed(1) : null,
     });
   }
@@ -361,15 +373,13 @@ async function pumpScan() {
   msg += `<i>24h change crossed +${PUMP_THRESHOLD}%</i>\n`;
 
   for (const t of alerts.slice(0, 20)) {
-    const status = t.score >= 70 ? '🔥' : t.score >= 45 ? '👀' : '📊';
     const label = t.prevC24 ? '📈 STILL CLIMBING' : '🆕 NEW';
-    msg += `\n${status} <b>${t.symbol}</b> (${t.name}) — ${label}\n`;
+    msg += `\n🚀 <b>${t.symbol}</b> (${t.name}) — ${label}\n`;
     msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Vol: ${fmtVol(t.volume)}\n`;
-    msg += `   📈 <b>24h: ${t.c24}%</b> | 7d: ${t.c7}% | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
+    msg += `   📈 <b>24h: +${t.c24}%</b> | 7d: ${t.c7}% | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
     if (t.prevC24) {
-      msg += `   ↗️ 24h was ${t.prevC24}% → now ${t.c24}%\n`;
+      msg += `   ↗️ 24h was +${t.prevC24}% → now +${t.c24}%\n`;
     }
-    msg += `   Score: ${t.score}/100\n`;
     msg += `   <a href="https://www.coingecko.com/en/coins/${t.id}">Chart</a> · <a href="https://www.binance.com/en/trade/${t.symbol}_USDT">Trade</a>\n`;
   }
 
