@@ -260,7 +260,9 @@ async function initialScan() {
   const SIX_MONTHS = 180 * 24 * 60 * 60 * 1000;
   const FIVE_YEARS = 5 * 365 * 24 * 60 * 60 * 1000;
 
-  const pumping = [];
+  // Seed ALL coins into alerted map with their current 24h values
+  // so we only alert when something NEWLY crosses 10%, not already above
+  let seeded = 0;
   for (const coin of allMarket) {
     const athDate = coin.ath_date ? new Date(coin.ath_date).getTime() : 0;
     const atlDate = coin.atl_date ? new Date(coin.atl_date).getTime() : 0;
@@ -269,56 +271,17 @@ async function initialScan() {
     if (age < SIX_MONTHS || age > FIVE_YEARS) continue;
 
     const c24 = coin.price_change_percentage_24h_in_currency ?? coin.price_change_percentage_24h ?? 0;
-    if (c24 < PUMP_THRESHOLD) continue;
-
-    const c7 = coin.price_change_percentage_7d_in_currency ?? 0;
-    const c30 = coin.price_change_percentage_30d_in_currency ?? 0;
-    const ageYears = (age / (365 * 24 * 60 * 60 * 1000)).toFixed(1);
-
     const r24 = Math.round(c24 * 10) / 10;
     alerted.set(coin.id, { c24: r24 });
-
-    pumping.push({
-      symbol: (coin.symbol || '').toUpperCase(),
-      name: coin.name,
-      id: coin.id,
-      price: coin.current_price,
-      market_cap: coin.market_cap,
-      volume: coin.total_volume,
-      c24: c24.toFixed(1),
-      c24_raw: c24,
-      c7: c7.toFixed(1),
-      c30: c30.toFixed(1),
-      ath_drop: Math.abs(coin.ath_change_percentage || 0).toFixed(1),
-      ageYears,
-    });
+    seeded++;
   }
 
-  pumping.sort((a, b) => b.c24_raw - a.c24_raw);
+  log(`✅ Seeded ${seeded} coins. Will alert when any newly cross +${PUMP_THRESHOLD}% in 24h.`);
 
-  log(`✅ Found ${pumping.length} tokens up ${PUMP_THRESHOLD}%+ in 24h`);
-
-  if (pumping.length === 0) {
-    await sendTelegram(`📋 <b>Scanner Started</b>\n\nNo Binance tokens currently up +${PUMP_THRESHOLD}% in 24h.\n\n⏰ Monitoring every ${SCAN_INTERVAL/1000}s...`);
-    return;
-  }
-
-  let msg = `📋 <b>BINANCE 24h PUMP REPORT</b>\n`;
-  msg += `📊 Scanned: ${allMarket.length} | Pumping (+${PUMP_THRESHOLD}% 24h): ${pumping.length}\n`;
-  msg += `Filter: Binance USDT pairs | Age 6mo–5yr | 24h change +${PUMP_THRESHOLD}%+\n`;
-
-  for (const t of pumping.slice(0, 30)) {
-    msg += `\n🚀 <b>${t.symbol}</b> (${t.name})\n`;
-    msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Age: ${t.ageYears}y\n`;
-    msg += `   📈 <b>24h: +${t.c24}%</b> | 7d: ${t.c7}% | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
-    msg += `   <a href="https://www.coingecko.com/en/coins/${t.id}">Chart</a> · <a href="https://www.binance.com/en/trade/${t.symbol}_USDT">Trade</a>\n`;
-  }
-
-  if (pumping.length > 30) {
-    msg += `\n<i>+${pumping.length - 30} more...</i>\n`;
-  }
-
-  msg += `\n⏰ Now monitoring every ${SCAN_INTERVAL/1000}s for new pumps\n`;
+  let msg = `📋 <b>Scanner Started</b>\n\n`;
+  msg += `📊 Tracking ${seeded} Binance tokens (age 6mo–5yr)\n`;
+  msg += `⏰ Checking every ${SCAN_INTERVAL/1000}s for tokens crossing +${PUMP_THRESHOLD}% in 24h\n`;
+  msg += `🔔 You'll be alerted when a token hits or crosses the threshold\n\n`;
   msg += `⚠️ <i>Not financial advice. DYOR.</i>`;
 
   await sendTelegram(msg);
