@@ -327,10 +327,21 @@ async function pumpScan() {
   const allMarket = await fetchAllMarketData();
   const alerts = [];
 
+  const now = Date.now();
+  const SIX_MONTHS = 180 * 24 * 60 * 60 * 1000;
+  const FIVE_YEARS = 5 * 365 * 24 * 60 * 60 * 1000;
+
   for (const coin of allMarket) {
+    // Check coin age: 6 months to 5 years old (use ath_date as proxy)
+    const athDate = coin.ath_date ? new Date(coin.ath_date).getTime() : 0;
+    const atlDate = coin.atl_date ? new Date(coin.atl_date).getTime() : 0;
+    const oldestDate = Math.min(athDate || now, atlDate || now);
+    const age = now - oldestDate;
+    if (age < SIX_MONTHS || age > FIVE_YEARS) continue;
+
     const c24 = coin.price_change_percentage_24h_in_currency ?? coin.price_change_percentage_24h ?? 0;
 
-    // Any Binance token up 10%+ in 24h
+    // 24h up 10%+
     if (c24 < PUMP_THRESHOLD) continue;
 
     // Only alert if 24h going meaningfully higher than last alert
@@ -343,6 +354,7 @@ async function pumpScan() {
 
     const c7 = coin.price_change_percentage_7d_in_currency ?? 0;
     const c30 = coin.price_change_percentage_30d_in_currency ?? 0;
+    const ageYears = (age / (365 * 24 * 60 * 60 * 1000)).toFixed(1);
 
     alerts.push({
       symbol: (coin.symbol || '').toUpperCase(),
@@ -356,6 +368,7 @@ async function pumpScan() {
       c7: c7.toFixed(1),
       c30: c30.toFixed(1),
       ath_drop: Math.abs(coin.ath_change_percentage || 0).toFixed(1),
+      ageYears,
       prevC24: prevC24 != null ? prevC24.toFixed(1) : null,
     });
   }
@@ -375,7 +388,7 @@ async function pumpScan() {
   for (const t of alerts.slice(0, 20)) {
     const label = t.prevC24 ? '📈 STILL CLIMBING' : '🆕 NEW';
     msg += `\n🚀 <b>${t.symbol}</b> (${t.name}) — ${label}\n`;
-    msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Vol: ${fmtVol(t.volume)}\n`;
+    msg += `   💰 ${fmtPrice(t.price)} | MCap: ${fmtMcap(t.market_cap)} | Age: ${t.ageYears}y\n`;
     msg += `   📈 <b>24h: +${t.c24}%</b> | 7d: ${t.c7}% | 30d: ${t.c30}% | ATH: -${t.ath_drop}%\n`;
     if (t.prevC24) {
       msg += `   ↗️ 24h was +${t.prevC24}% → now +${t.c24}%\n`;
